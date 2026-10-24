@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Acme Feature Review</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700&family=Golos+Text:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: review desk. Card queue on the left, one card read top to bottom, decision bar pinned at the bottom. */
+:root{
+  --bg:#f3f4f1; --surface:#ffffff; --ink:#1b1f1d; --muted:#5d6661; --line:#dde1dc;
+  --accent:#2f5d50; --accent-soft:#e3ece8;
+  --yes:#1f7a4a; --yes-soft:#e2f2e8; --no:#b3261e; --no-soft:#f8e3e1; --chg:#9a6a00; --chg-soft:#f6edd6;
+  --rh:#3b5bdb; --kp:#0b7a75;
+  --f-display:"Onest",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Golos Text",ui-sans-serif,system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141716; --surface:#1c201e; --ink:#e8ebe8; --muted:#a2aba6; --line:#2e3431;
+  --accent:#8cc4b2; --accent-soft:#22302b;
+  --yes:#6fcf97; --yes-soft:#1d3127; --no:#f2867d; --no-soft:#3a2220; --chg:#e7c068; --chg-soft:#352d1a;
+  --rh:#93a8ff; --kp:#5cc9c2; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141716; --surface:#1c201e; --ink:#e8ebe8; --muted:#a2aba6; --line:#2e3431;
+  --accent:#8cc4b2; --accent-soft:#22302b;
+  --yes:#6fcf97; --yes-soft:#1d3127; --no:#f2867d; --no-soft:#3a2220; --chg:#e7c068; --chg-soft:#352d1a;
+  --rh:#93a8ff; --kp:#5cc9c2; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55;margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:20px 120px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 24px;margin-bottom:16px}
+h1{font-family:var(--f-display);font-weight:700;font-size:1.6rem;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.sub{color:var(--muted);margin:2px 0 0;font-size:.92rem}
+.tally{display:flex;gap:8px;flex-wrap:wrap}
+.tally span{font-family:var(--f-mono);font-size:.78rem;padding:4px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-variant-numeric:tabular-nums}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.chip{font:inherit;font-size:.85rem;border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px;border-radius:999px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+.chip:focus-visible,button:focus-visible,textarea:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.grid{display:grid;grid-template-columns:300px minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)}}
+.queue{display:flex;flex-direction:column;gap:6px;position:sticky;top:calc(env(safe-area-inset-top,0px) + 12px)}
+@media (max-width:860px){.queue{position:static}.grid.detail-open .queue{display:none}.grid:not(.detail-open) .detail{display:none}}
+.qitem{all:unset;cursor:pointer;display:grid;grid-template-columns:auto 1fr;gap:4px 10px;padding:10px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--line)}
+.qitem[aria-current="true"]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.qitem .dot{width:9px;height:9px;border-radius:50%;margin-top:7px;background:var(--line)}
+.qitem .dot.yes{background:var(--yes)}.qitem .dot.no{background:var(--no)}.qitem .dot.changes{background:var(--chg)}.qitem .dot.pending{background:transparent;border:2px solid var(--muted)}
+.qitem .qt{font-weight:600;font-size:.93rem;line-height:1.35}
+.qitem .qm{grid-column:2;font-size:.78rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.prod{font-family:var(--f-mono);font-size:.72rem;font-weight:500;letter-spacing:.04em;text-transform:uppercase}
+.prod.RightHere{color:var(--rh)}.prod.Keeplane{color:var(--kp)}
+.detail{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px clamp(16px,3vw,32px) 28px;min-width:0}
+.linkbtn.back{display:none}
+@media (max-width:860px){.linkbtn.back{display:inline-flex}}
+.dhead{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.pills{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pill{font-size:.76rem;padding:3px 9px;border-radius:999px;background:var(--accent-soft);color:var(--accent);font-weight:500}
+.pill.neck{background:var(--chg-soft);color:var(--chg)}
+.pill.flag{background:var(--bg);color:var(--muted);border:1px solid var(--line)}
+h2.title{font-family:var(--f-display);font-size:1.45rem;font-weight:700;margin:0;line-height:1.25;text-wrap:balance}
+.issue{font-family:var(--f-mono);font-size:.8rem;color:var(--muted)}
+.issue a{color:inherit}
+section.s{display:grid;grid-template-columns:150px minmax(0,1fr);gap:6px 20px;padding:16px 0;border-top:1px solid var(--line)}
+@media (max-width:600px){section.s{grid-template-columns:minmax(0,1fr)}}
+.s h3{margin:0;font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;font-family:var(--f-body)}
+.s h3 b{display:block;font-family:var(--f-mono);font-weight:500;color:var(--accent);letter-spacing:0;font-size:.8rem}
+.s p{margin:0 0 6px}
+.s ul{margin:0;padding-left:1.1em}
+.s li{margin:2px 0}
+.story{font-size:1.05rem;font-style:italic}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;font-size:.93rem}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+.mono{font-family:var(--f-mono);font-size:.82rem}
+.shots{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x mandatory}
+figure.shot{margin:0;flex:0 0 auto;width:min(210px,62vw);scroll-snap-align:start}
+figure.shot button.zoom{all:unset;cursor:zoom-in;display:block;border-radius:22px;overflow:hidden;border:1px solid var(--line);background:var(--bg);aspect-ratio:393/852;width:100%}
+figure.shot img{width:100%;height:100%;object-fit:cover;display:block}
+figure.shot figcaption{font-size:.8rem;color:var(--muted);margin-top:6px}
+.compare{display:grid;grid-template-columns:minmax(0,1fr);gap:4px}
+.meter{display:flex;gap:3px;margin:2px 0 4px}
+.meter i{width:22px;height:6px;border-radius:3px;background:var(--line)}
+.meter i.on{background:var(--accent)}
+.note{font-size:.85rem;color:var(--muted)}
+.decision{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding-block:12px calc(12px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));z-index:5}
+.decision .in{max-width:1180px;margin:0 auto;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.decision textarea{flex:1 1 260px;min-height:44px;max-height:120px;resize:vertical;font:inherit;font-size:.92rem;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.btns{display:flex;gap:8px}
+.dbtn{font:inherit;font-weight:600;min-height:44px;padding:0 18px;border-radius:10px;border:1.5px solid transparent;cursor:pointer}
+.dbtn.yes{background:var(--yes);color:var(--surface)}
+.dbtn.chg{background:var(--chg-soft);color:var(--chg);border-color:var(--chg)}
+.dbtn.no{background:var(--no-soft);color:var(--no);border-color:var(--no)}
+.dbtn[disabled]{opacity:.45;cursor:not-allowed}
+.status{font-size:.85rem;color:var(--muted);flex-basis:100%}
+.status.yes{color:var(--yes)}.status.no{color:var(--no)}.status.changes{color:var(--chg)}
+.empty{padding:40px 20px;text-align:center;color:var(--muted)}
+.empty h2{font-family:var(--f-display);color:var(--ink);font-size:1.2rem}
+.lightbox{position:fixed;inset:0;background:color-mix(in srgb,var(--bg) 92%,transparent);display:flex;align-items:center;justify-content:center;z-index:20;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.lightbox img{max-height:100%;max-width:100%;border-radius:24px;border:1px solid var(--line)}
+.linkbtn{all:unset;cursor:pointer;color:var(--accent);font-size:.88rem;font-weight:500}
+.cbtn{font:inherit;font-size:.8rem;margin-top:6px;padding:6px 10px;min-height:32px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--accent);cursor:pointer}
+.cbtn b{font-family:var(--f-mono);font-weight:500;margin-left:4px}
+.notes{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.note-item{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:.92rem}
+.note-item .meta{font-size:.76rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+.note-item .meta b{color:var(--accent);font-weight:600}
+.composer{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding:10px;border:1px solid var(--accent);border-radius:12px;background:var(--accent-soft)}
+.composer label{font-size:.8rem;color:var(--accent);font-weight:600}
+.composer textarea{font:inherit;font-size:.95rem;min-height:72px;resize:vertical;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.composer .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.composer .hint{font-size:.78rem;color:var(--muted);flex:1 1 200px}
+.vfile{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.vbtn{display:inline-flex;align-items:center;min-height:44px;margin-top:0}
+audio.vn{width:100%;max-width:420px;margin:4px 0;display:block}
+.pending-tx{font-size:.85rem;color:var(--muted);font-style:italic}
+.dbtn.alt{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+.dbtn.later{background:var(--bg);color:var(--muted);border-color:var(--line)}
+.status.alternative{color:var(--accent)}.status.postpone{color:var(--muted)}
+.qitem .dot.alternative{background:var(--accent)}.qitem .dot.postpone{background:var(--muted)}
+@media (max-width:600px){.btns{width:100%}.btns .dbtn{flex:1 1 0;padding:0 8px;font-size:.88rem}}
+@media (prefers-reduced-motion:no-preference){.qitem,.chip,.dbtn{transition:background .15s,border-color .15s}}
+
+.mic-row{display:flex;gap:8px;align-items:flex-start;flex:1 1 260px;min-width:0}
+.mic-row textarea{flex:1 1 auto;min-width:0}
+.mic{flex:0 0 auto;width:48px;height:48px;border-radius:50%;border:1.5px solid var(--accent);background:var(--surface);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation}
+.mic svg{width:22px;height:22px}
+.mic.rec{background:var(--no);border-color:var(--no);color:#fff;animation:pulse 1.2s ease-in-out infinite}
+.mic[disabled]{opacity:.5;cursor:progress}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--no) 45%,transparent)}50%{box-shadow:0 0 0 10px transparent}}
+@media (prefers-reduced-motion:reduce){.mic.rec{animation:none}}
+.mic-status{font-size:.8rem;color:var(--muted);min-height:1.1em}
+.mic-status.err{color:var(--no)}
+.src-voice{font-size:.72rem;color:var(--accent);font-family:var(--f-mono)}
+.gate{max-width:520px;margin:12vh auto;text-align:center;color:var(--muted)}
+.gate h1{color:var(--ink);margin-bottom:8px}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Обзор фич</h1>
+      <p class="sub">Keeplane и RightHere. Каждая карточка: было, зачем, метрика, решение, как докажем, как будет выглядеть. Ваше «да» запускает разработку.</p>
+    </div>
+    <div class="tally" id="tally"></div>
+  </header>
+  <div class="filters" role="group" aria-label="Фильтр">
+    <button class="chip" data-f="all" aria-pressed="true">Все</button>
+    <button class="chip" data-f="RightHere" aria-pressed="false">RightHere</button>
+    <button class="chip" data-f="Keeplane" aria-pressed="false">Keeplane</button>
+    <button class="chip" data-f="pending" aria-pressed="false">Ждут решения</button>
+    <button class="chip" data-f="decided" aria-pressed="false">Решённые</button>
+  </div>
+  <div class="grid" id="grid">
+    <nav class="queue" id="queue" aria-label="Карточки"></nav>
+    <article class="detail" id="detail"></article>
+  </div>
+</div>
+<div class="decision" id="decision" hidden>
+  <div class="in">
+    <div class="mic-row" id="comment-row"><textarea id="comment" placeholder="Почему так решили. Можно голосом: кнопка микрофона справа" aria-label="Комментарий к решению"></textarea></div>
+    <div class="btns">
+      <button class="dbtn yes" id="b-yes">Согласен</button>
+      <button class="dbtn alt" id="b-alt">Другой вариант</button>
+      <button class="dbtn no" id="b-no">Не согласен</button>
+      <button class="dbtn later" id="b-later">Отложить</button>
+    </div>
+    <div class="status" id="dstatus" aria-live="polite"></div>
+  </div>
+</div>
+<div class="lightbox" id="lightbox" hidden><img id="lbimg" alt=""></div>
+
+<script src="app.js"></script>
+</body>
+</html>
