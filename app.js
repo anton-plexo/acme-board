@@ -44,26 +44,36 @@ const BTN_IDS=["#b-yes","#b-alt","#b-no","#b-later"];
 const norm=n=>({id:n.id,cardId:n.card_id||n.cardId,target:n.target,text:n.text,source:n.source,at:n.at});
 let notes=[],openComposer=null;
 const EVID=[[0.1,"мнение"],[0.3,"исследование рынка"],[0.5,"наблюдение наших пользователей"],[0.8,"тест"],[1.0,"данные после запуска"]];
-let cards=[],decisions={},filter="all",current=null,canWrite=!!KEY;
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};const lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const PROJECTS=[["RightHere","RightHere"],["Keeplane","Keeplane"],["all","Оба"]];
+const STATUSES=[["pending","Ждут решения"],["decided","Решённые"],["all","Все"]];
+let cards=[],decisions={},current=null,canWrite=!!KEY;
+let project=lsGet("acmeBoardProject")||"RightHere",status=lsGet("acmeBoardStatus")||"pending";
 const $=s=>document.querySelector(s);
 const el=(t,a={},...kids)=>{const e=document.createElement(t);for(const[k,v]of Object.entries(a)){if(k==="class")e.className=v;else if(k==="text")e.textContent=v;else e.setAttribute(k,v)}for(const k of kids)if(k!=null)e.append(k);return e};
-const statusOf=id=>decisions[id]?.decision||"pending";
+const revised=id=>{const d=decisions[id];const c=cards.find(x=>x.id===id);return !!(d&&c&&c.revisedAt&&c.revisedAt>d.at)};
+const statusOf=id=>{const d=decisions[id];if(!d||revised(id))return "pending";return d.decision};
 const score=c=>((c.priority?.impact||0)*(c.priority?.confidence||0));
 
-function visible(){return cards.filter(c=>{const s=statusOf(c.id);
-  if(filter==="RightHere"||filter==="Keeplane")return c.product===filter;
-  if(filter==="pending")return s==="pending";
-  if(filter==="decided")return s!=="pending";return true;})
+const inProject=c=>project==="all"||c.product===project;
+const inStatus=(c,st)=>{const s=statusOf(c.id);return st==="all"||(st==="pending"?s==="pending":s!=="pending")};
+function visible(){return cards.filter(c=>inProject(c)&&inStatus(c,status))
   .sort((a,b)=>(statusOf(a.id)==="pending"?0:1)-(statusOf(b.id)==="pending"?0:1)||(b.bottleneck?1:0)-(a.bottleneck?1:0)||score(b)-score(a)||(a.order||99)-(b.order||99));}
 
-function renderTally(){const t=$("#tally");t.replaceChildren();const n=s=>cards.filter(c=>statusOf(c.id)===s).length;
-  t.append(el("span",{text:`ждут ${n("pending")}`}),el("span",{text:`согласен ${n("yes")}`}),el("span",{text:`другой вариант ${n("alternative")+n("changes")}`}),el("span",{text:`не согласен ${n("no")}`}),el("span",{text:`отложено ${n("postpone")}`}));}
-
+function chipGroup(box,items,value,count,onPick){box.replaceChildren();for(const[v,label]of items){const n=count(v);
+  const b=el("button",{class:"chip","aria-pressed":String(v===value)},label,el("b",{text:String(n)}));b.onclick=()=>onPick(v);box.append(b);}}
+function renderFilters(){
+  chipGroup($("#f-project"),PROJECTS,project,v=>cards.filter(c=>(v==="all"||c.product===v)&&statusOf(c.id)==="pending").length,v=>{project=v;lsSet("acmeBoardProject",v);afterFilter();});
+  chipGroup($("#f-status"),STATUSES,status,v=>cards.filter(c=>inProject(c)&&inStatus(c,v)).length,v=>{status=v;lsSet("acmeBoardStatus",v);afterFilter();});}
+function afterFilter(){renderFilters();const list=visible();
+  if(current&&list.some(c=>c.id===current)){renderQueue();return;}
+  if(window.matchMedia("(min-width:861px)").matches&&list[0]){openComposer=null;open(list[0].id,false);return;}
+  current=null;$("#grid").classList.remove("detail-open");$("#decision").hidden=true;$("#detail").replaceChildren(emptyState());renderQueue();}
 function renderQueue(){const q=$("#queue");q.replaceChildren();const list=visible();
-  if(!list.length){q.append(el("p",{class:"note",text:cards.length?"В этом фильтре карточек нет.":"Очередь пуста."}));return;}
+  if(!list.length){q.append(el("p",{class:"note",text:!cards.length?"Очередь пуста.":status==="pending"?"Все карточки этого проекта решены. Новые появятся здесь.":"В этом фильтре карточек нет."}));return;}
   for(const c of list){const s=statusOf(c.id);
     const b=el("button",{class:"qitem","aria-current":String(current===c.id)},el("span",{class:"dot "+s,title:DEC[s]}),el("span",{class:"qt",text:c.title}),
-      el("span",{class:"qm"},el("span",{class:"prod "+c.product,text:c.product}),el("span",{text:STAGES[c.stage]||c.stage||""}),c.bottleneck?el("span",{text:"узкое место"}):null));
+      el("span",{class:"qm"},el("span",{class:"prod "+c.product,text:c.product}),el("span",{text:STAGES[c.stage]||c.stage||""}),c.bottleneck?el("span",{text:"узкое место"}):null,revised(c.id)?el("span",{class:"upd",text:"обновлено"}):null));
     b.onclick=()=>{openComposer=null;open(c.id,true)};q.append(b);}}
 
 function notesFor(cardId,prefix){return notes.filter(n=>n.cardId===cardId&&(prefix==null||n.target===prefix||(prefix.endsWith(":")&&n.target.startsWith(prefix)))).sort((a,b)=>(a.at||"").localeCompare(b.at||""));}
@@ -83,18 +93,25 @@ function composer(c,target){if(!canWrite){return el("p",{class:"note",text:"Ко
       notes.push(norm(n));openComposer=null;busy=0;open(current,false);}
     catch(e){save.disabled=false;st.textContent="Не сохранилось: "+e.message+". Текст на месте, попробуйте ещё раз.";}};
   setTimeout(()=>ta.focus(),0);return box;}
-function shots(images,side,c){const wrap=el("div");const w=el("div",{class:"shots"});for(const im of images||[]){if(!im.url)continue;
+function shots(images,side,c){const w=el("div",{class:"shots"});for(const im of images||[]){if(!im.url)continue;
   const btn=el("button",{class:"zoom","aria-label":"Открыть крупно: "+(im.caption||"")},el("img",{src:im.url,alt:im.caption||"Скриншот",loading:"lazy"}));
   btn.onclick=()=>{$("#lbimg").src=im.url;$("#lbimg").alt=im.caption||"";$("#lightbox").hidden=false};
   const target=side+":"+im.file;const count=c?notesFor(c.id,target).length:0;
   const cb=c?el("button",{class:"cbtn","aria-label":"Комментарий к экрану "+(im.caption||"")},"Комментарий",count?el("b",{text:String(count)}):null):null;
   if(cb)cb.onclick=()=>{openComposer={card:c.id,target};open(current,false)};
   w.append(el("figure",{class:"shot"},btn,im.caption?el("figcaption",{text:im.caption}):null,cb));}
-  if(!w.childElementCount)return el("p",{class:"note",text:"Скриншоты готовятся."});
-  wrap.append(w);
-  if(c){const items=notesFor(c.id,side+":");if(items.length)wrap.append(noteList(c,items));
-    if(openComposer&&openComposer.card===c.id&&openComposer.target.startsWith(side+":"))wrap.append(composer(c,openComposer.target));}
-  return wrap;}
+  return w.childElementCount?w:null;}
+function sidePane(c,side){const before=side==="before";const imgs=c[side]?.images||[];const row=shots(imgs,side,c);
+  return el("div",{class:"side "+side},el("h3",{text:before?"Было":"Станет"}),row||el("p",{class:"note",text:before?(c.before?.text||"Сейчас этого нет."):"Макеты готовятся."}));}
+function compare(c){const box=el("section",{class:"pair","aria-label":"Было и станет"},sidePane(c,"before"),sidePane(c,"after"));
+  const items=notesFor(c.id,"before:").concat(notesFor(c.id,"after:")).sort((a,b)=>(a.at||"").localeCompare(b.at||""));
+  const extra=[];if(items.length)extra.push(noteList(c,items));
+  if(openComposer&&openComposer.card===c.id&&openComposer.target!=="card")extra.push(composer(c,openComposer.target));
+  return extra.length?el("div",{},box,el("div",{class:"pair-notes"},...extra)):box;}
+function changesBox(c){const ch=(c.changes||[]).slice().sort((a,b)=>String(b.at).localeCompare(String(a.at)));if(!ch.length)return null;
+  const box=el("section",{class:"changes"},el("h3",{text:revised(c.id)?"Обновлено после вашего комментария":"Что менялось"}));
+  for(const x of ch.slice(0,4))box.append(el("div",{class:"chg"},el("div",{class:"meta",text:(x.at?new Date(x.at).toLocaleString("ru-RU",{dateStyle:"short",timeStyle:"short"})+" · ":"")+(x.because||"")}),el("div",{text:x.what||""})));
+  return box;}
 
 function sec(n,title,...body){return el("section",{class:"s"},el("h3",{},el("b",{text:n}),title),el("div",{class:"compare"},...body));}
 function ul(items){const u=el("ul");for(const i of items||[])u.append(el("li",{text:i}));return u;}
@@ -107,21 +124,24 @@ function open(id,scroll){current=id;const c=cards.find(x=>x.id===id);const d=$("
   const p=c.priority||{};const flags=(p.costFlags||[]).map(f=>el("span",{class:"pill flag",text:f}));
   const issueLink=c.issue?(()=>{const m=c.issue.match(/^([\w-]+\/[\w-]+)#(\d+)$/);return m?el("a",{href:`https://github.com/${m[1]}/issues/${m[2]}`,target:"_blank",rel:"noopener",text:c.issue}):document.createTextNode(c.issue)})():null;
   d.append(el("div",{class:"dhead"},back,
-    el("div",{class:"pills"},el("span",{class:"prod "+c.product,text:c.product}),el("span",{class:"pill",text:STAGES[c.stage]||c.stage||""}),c.bottleneck?el("span",{class:"pill neck",text:"узкое место"}):null,el("span",{class:"pill",text:DEC[statusOf(c.id)]})),
+    el("div",{class:"pills"},el("span",{class:"prod "+c.product,text:c.product}),el("span",{class:"pill",text:STAGES[c.stage]||c.stage||""}),c.bottleneck?el("span",{class:"pill neck",text:"узкое место"}):null,el("span",{class:"pill",text:DEC[statusOf(c.id)]}),revised(c.id)?el("span",{class:"pill upd",text:"обновлено"}):null),
     el("h2",{class:"title",text:c.title}),issueLink?el("div",{class:"issue"},issueLink):null));
-  d.append(sec("1","Было",el("p",{text:c.before?.text||""}),shots(c.before?.images,"before",c),c.before?.note?el("p",{class:"note",text:c.before.note}):null));
-  d.append(sec("2","История",el("p",{class:"story",text:c.story||""})));
+  const ch=changesBox(c);if(ch)d.append(ch);
+  d.append(compare(c));
+  d.append(sec("1","Было",el("p",{text:c.before?.text||""}),c.before?.note?el("p",{class:"note",text:c.before.note}):null));
+  d.append(sec("2","Проблема",el("p",{class:"story",text:c.story||""})));
+  d.append(sec("3","Решение",ul(c.proposal)));
+  const alt=c.alternatives||{};
+  d.append(sec("4","Альтернативы",el("dl",{class:"kv"},el("dt",{text:"Не делать"}),el("dd",{text:alt.doNothing||"—"}),el("dt",{text:"Дешевле"}),el("dd",{text:alt.cheaper||"—"}))));
   const m=c.metric||{};
-  d.append(sec("3","Метрика",el("dl",{class:"kv"},el("dt",{text:"Этап"}),el("dd",{text:STAGES[c.stage]||""}),el("dt",{text:"Метрика"}),el("dd",{text:m.name||""}),el("dt",{text:"Сейчас"}),el("dd",{text:m.current||"нет данных"}),el("dt",{text:"Цель"}),el("dd",{text:m.target||""}),el("dt",{text:"События"}),el("dd",{class:"mono",text:(m.events||[]).join(", ")}))));
-  d.append(sec("4","Предложение",ul(c.proposal)));
+  d.append(sec("5","Метрика",el("dl",{class:"kv"},el("dt",{text:"Этап"}),el("dd",{text:STAGES[c.stage]||""}),el("dt",{text:"Метрика"}),el("dd",{text:m.name||""}),el("dt",{text:"Сейчас"}),el("dd",{text:m.current||"нет данных"}),el("dt",{text:"Цель"}),el("dd",{text:m.target||""}),el("dt",{text:"События"}),el("dd",{class:"mono",text:(m.events||[]).join(", ")}))));
   const basis=el("ul");for(const b of c.basis||[]){const li=el("li");li.append(b.label||"");if(b.ref&&/^https?:/.test(b.ref)){li.append(" ",el("a",{href:b.ref,target:"_blank",rel:"noopener",text:"ссылка"}))}else if(b.ref){li.append(" ",el("span",{class:"mono",text:b.ref}))}basis.append(li);}
-  d.append(sec("5","На чём основано",basis));
+  d.append(sec("6","На чём основано",basis));
   const pr=c.proof||{};
-  d.append(sec("6","Как докажем",el("dl",{class:"kv"},el("dt",{text:"Сигнал"}),el("dd",{text:pr.signal||""}),el("dt",{text:"Порог"}),el("dd",{text:pr.threshold||""}),el("dt",{text:"Срок"}),el("dd",{text:pr.horizon||""}),el("dt",{text:"Метод"}),el("dd",{text:pr.method||""}))));
+  d.append(sec("7","Как докажем",el("dl",{class:"kv"},el("dt",{text:"Сигнал"}),el("dd",{text:pr.signal||""}),el("dt",{text:"Порог"}),el("dd",{text:pr.threshold||""}),el("dt",{text:"Срок"}),el("dd",{text:pr.horizon||""}),el("dt",{text:"Метод"}),el("dd",{text:pr.method||""}))));
   const conf=p.confidence||0;const meter=el("div",{class:"meter","aria-label":`Уверенность ${conf}`});for(const[v]of EVID)meter.append(el("i",{class:v<=conf+1e-9?"on":""}));
   const evidLabel=(EVID.slice().reverse().find(([v])=>conf>=v-1e-9)||EVID[0])[1];
-  d.append(sec("7","Приоритет",el("dl",{class:"kv"},el("dt",{text:"Влияние"}),el("dd",{text:`${p.impact??"?"} из 3`}),el("dt",{text:"Уверенность"}),el("dd",{},meter,el("span",{text:`${conf} · ${evidLabel}. ${p.confidenceWhy||""}`})),el("dt",{text:"Размер"}),el("dd",{text:p.size||""}),el("dt",{text:"Не делать"}),el("dd",{text:c.alternatives?.doNothing||""}),el("dt",{text:"Дешевле"}),el("dd",{text:c.alternatives?.cheaper||""}),el("dt",{text:"Остановимся"}),el("dd",{text:p.stop||""})),flags.length?el("div",{class:"pills"},...flags):null,c.risks?.length?el("div",{},el("p",{class:"note",text:"Риски"}),ul(c.risks)):null));
-  d.append(sec("8","Станет",shots(c.after?.images,"after",c)));
+  d.append(sec("8","Приоритет",el("dl",{class:"kv"},el("dt",{text:"Влияние"}),el("dd",{text:`${p.impact??"?"} из 3`}),el("dt",{text:"Уверенность"}),el("dd",{},meter,el("span",{text:`${conf} · ${evidLabel}. ${p.confidenceWhy||""}`})),el("dt",{text:"Размер"}),el("dd",{text:p.size||""}),el("dt",{text:"Остановимся"}),el("dd",{text:p.stop||""})),flags.length?el("div",{class:"pills"},...flags):null,c.risks?.length?el("div",{},el("p",{class:"note",text:"Риски"}),ul(c.risks)):null));
   if(c.result)d.append(sec("✓","Результат",el("p",{text:c.result})));
   const general=notesFor(c.id,"card");const addBtn=canWrite?el("button",{class:"cbtn",text:"Добавить комментарий к карточке"}):null;
   if(addBtn)addBtn.onclick=()=>{openComposer={card:c.id,target:"card"};open(current,false)};
@@ -130,29 +150,28 @@ function open(id,scroll){current=id;const c=cards.find(x=>x.id===id);const d=$("
   d.append(sec("10","Решение",el("p",{text:dec?`${DEC[dec.decision]||dec.decision}${dec.at?" · "+new Date(dec.at).toLocaleString("ru-RU",{dateStyle:"medium",timeStyle:"short"}):""}`:"Ещё нет."}),dec?.comment?el("p",{class:"story",text:dec.comment}):null));
   renderDecisionBar(c);renderQueue();if(scroll)window.scrollTo({top:0,behavior:"instant"in window?"instant":"auto"});}
 
-function renderDecisionBar(c){const bar=$("#decision");bar.hidden=false;const dec=decisions[c.id];const st=$("#dstatus");
+function renderDecisionBar(c){const bar=$("#decision");bar.hidden=false;const rv=revised(c.id);const dec=rv?null:decisions[c.id];const st=$("#dstatus");
   $("#comment").value=dec?.comment||"";
   for(const b of BTN_IDS)$(b).disabled=!canWrite;
   st.className="status "+(dec?.decision||"");
-  st.textContent=!canWrite?"Решение может принять владелец доски.":dec?`Сейчас: ${DEC[dec.decision]}. Можно изменить.`:"Выберите решение.";}
+  st.textContent=!canWrite?"Решение может принять владелец доски.":dec?`Сейчас: ${DEC[dec.decision]}. Можно изменить.`:rv?`Карточка обновлена после вашего «${DEC[decisions[c.id].decision]}». Решите заново.`:"Выберите решение.";}
 
 async function decide(kind){const c=cards.find(x=>x.id===current);if(!c||!canWrite)return;const st=$("#dstatus");
   const data={decision:kind,comment:$("#comment").value.trim(),at:new Date().toISOString(),cardId:c.id,issue:c.issue||"",title:c.title};
   if((kind==="alternative"||kind==="no")&&!data.comment){st.className="status";st.textContent=kind==="alternative"?"Опишите, какой вариант нужен. Можно голосом: кнопка микрофона рядом с полем.":"Напишите пару слов, почему нет.";$("#comment").focus();return;}
   for(const b of BTN_IDS)$(b).disabled=true;st.className="status";st.textContent="Сохраняю…";
-  try{const d=await api("/decision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cardId:c.id,decision:kind,comment:data.comment})});decisions[c.id]={decision:d.decision,comment:d.comment,at:d.at};renderTally();st.className="status "+kind;st.textContent=`Сохранено: ${DEC[kind]}. Product Owner увидит решение и перенесёт его в задачу.`;
+  try{const d=await api("/decision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cardId:c.id,decision:kind,comment:data.comment})});decisions[c.id]={decision:d.decision,comment:d.comment,at:d.at};renderFilters();renderQueue();st.className="status "+kind;st.textContent=`Сохранено: ${DEC[kind]}. Product Owner увидит решение и перенесёт его в задачу.`;
     const next=visible().find(x=>statusOf(x.id)==="pending"&&x.id!==c.id);if(next)setTimeout(()=>open(next.id,true),900);}
   catch(e){st.className="status no";st.textContent="Не сохранилось: "+(e?.message||"ошибка")+". Попробуйте ещё раз.";}
   finally{for(const b of BTN_IDS)$(b).disabled=!canWrite;}}
 
-function emptyState(){return el("div",{class:"empty"},el("h2",{text:cards.length?"Выберите карточку слева":"Карточки скоро появятся"}),el("p",{text:cards.length?"Решение принимается внизу экрана: Да, Поправить или Нет.":"Product Owner готовит карточки с реальными скриншотами и макетами. Каждая придёт сюда с метрикой и оценкой."}));}
+function emptyState(){const none=cards.length&&!visible().length;return el("div",{class:"empty"},el("h2",{text:none?(status==="pending"?"Здесь всё решено":"Здесь пока пусто"):cards.length?"Выберите карточку слева":"Карточки скоро появятся"}),el("p",{text:none?"Переключите проект или статус выше.":cards.length?"Решение принимается внизу экрана: Согласен, Другой вариант, Не согласен или Отложить.":"Product Owner готовит карточки с реальными скриншотами и макетами. Каждая придёт сюда с метрикой и оценкой."}));}
 
 $("#b-yes").onclick=()=>decide("yes");$("#b-alt").onclick=()=>decide("alternative");$("#b-no").onclick=()=>decide("no");$("#b-later").onclick=()=>decide("postpone");
 $("#lightbox").onclick=()=>{$("#lightbox").hidden=true};
 document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#lightbox").hidden=true});
-for(const ch of document.querySelectorAll(".chip"))ch.onclick=()=>{filter=ch.dataset.f;for(const x of document.querySelectorAll(".chip"))x.setAttribute("aria-pressed",String(x===ch));renderQueue();};
 
-function rerender(){renderTally();if(openComposer||busy){renderQueue();return;}if(current&&cards.some(c=>c.id===current))open(current,false);else{const d=$("#detail");d.replaceChildren(emptyState());renderQueue();}}
+function rerender(){renderFilters();if(openComposer||busy){renderQueue();return;}if(current&&cards.some(c=>c.id===current))open(current,false);else{const d=$("#detail");d.replaceChildren(emptyState());renderQueue();}}
 rerender();
 
 (function boot(){
