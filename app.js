@@ -2,7 +2,18 @@
 const API="https://zifgoeppualinbsbfmsj.supabase.co/functions/v1/acme-board";
 let KEY=null;
 try{const m=(location.hash||"").match(/k=([\w-]{20,})/);if(m){localStorage.setItem("acmeBoardKey",m[1]);history.replaceState(null,"",location.pathname);}KEY=localStorage.getItem("acmeBoardKey");}catch(e){}
-async function api(path,opts={}){const r=await fetch(API+path,{...opts,headers:{"x-board-key":KEY||"",...(opts.headers||{})}});let j={};try{j=await r.json()}catch(e){}if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j;}
+async function api(path,opts={},tries=1){for(let i=0;;i++){const ac=new AbortController();const tm=setTimeout(()=>ac.abort(),25000);
+  try{const r=await fetch(API+path,{...opts,signal:ac.signal,headers:{"x-board-key":KEY||"",...(opts.headers||{})}});let j={};try{j=await r.json()}catch(e){}
+    if(!r.ok){const err=new Error(j.error||("HTTP "+r.status));err.retry=r.status>=500||r.status===429;throw err;}return j;}
+  catch(e){const again=e.name==="AbortError"||e.retry||e instanceof TypeError;
+    if(i+1<tries&&again){await new Promise(res=>setTimeout(res,1500*(i+1)));continue;}
+    throw e.name==="AbortError"?new Error("сервер не ответил за 25 секунд"):e;}
+  finally{clearTimeout(tm);}}}
+// Drafts survive refreshes, tab switches and reloads, so nothing typed or dictated is lost.
+let drafts={};try{drafts=JSON.parse(localStorage.getItem("acmeBoardDrafts")||"{}")}catch(e){}
+function setDraft(k,v){if(v&&v.trim())drafts[k]=v;else delete drafts[k];try{localStorage.setItem("acmeBoardDrafts",JSON.stringify(drafts))}catch(e){}}
+const typing=()=>{const a=document.activeElement;return !!a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT")};
+let saving=false,pendingRender=false,lastSig="",barCard=null;
 let busy=0;
 const MIC_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>';
 const STOP_SVG='<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>';
@@ -14,7 +25,7 @@ function micButton(ta,statusEl){
   async function transcribe(blob){b.disabled=true;say("Расшифровываю…");
     try{const r=await fetch(API+"/transcribe",{method:"POST",headers:{"x-board-key":KEY||"","content-type":(blob.type||"audio/mp4").split(";")[0]},body:blob});
       const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));
-      const cur=ta.value.trim();ta.value=(cur?cur+" ":"")+j.text;ta.dataset.voice="1";lastBlob=null;
+      const cur=ta.value.trim();ta.value=(cur?cur+" ":"")+j.text;ta.dataset.voice="1";lastBlob=null;ta.dispatchEvent(new Event("input",{bubbles:true}));
       say("Готово. Проверьте текст и сохраните.");ta.focus();try{ta.setSelectionRange(ta.value.length,ta.value.length)}catch(e){}}
     catch(e){lastBlob=blob;say("Не удалось расшифровать: "+e.message+". Нажмите микрофон, чтобы отправить эту запись ещё раз.",true);}
     finally{b.disabled=false;busy=Math.max(0,busy-1);}}
@@ -82,15 +93,16 @@ function noteList(c,items){const box=el("div",{class:"notes"});for(const n of it
   box.append(el("div",{class:"note-item"},el("div",{class:"meta"},el("b",{text:targetLabel(c,n.target)}),n.source==="voice"?el("span",{class:"src-voice",text:"голосом"}):null,el("span",{text:n.at?new Date(n.at).toLocaleString("ru-RU",{dateStyle:"short",timeStyle:"short"}):""})),el("div",{text:n.text})));}return box;}
 function composer(c,target){if(!canWrite){return el("p",{class:"note",text:"Комментировать может владелец доски."});}
   const id="cmp-"+c.id+"-"+target.replace(/[^\w-]/g,"_");
-  const ta=el("textarea",{id,placeholder:"Что думаете? Нажмите микрофон и говорите."});
+  const dkey="note:"+c.id+":"+target;
+  const ta=el("textarea",{id,placeholder:"Что думаете? Нажмите микрофон и говорите."});ta.value=drafts[dkey]||"";ta.addEventListener("input",()=>setDraft(dkey,ta.value));
   const st=el("div",{class:"mic-status"});const mic=micButton(ta,st);
   const save=el("button",{class:"dbtn yes",text:"Сохранить"});const cancel=el("button",{class:"linkbtn",text:"Отмена"});
   const box=el("div",{class:"composer"},el("label",{for:id,text:"Комментарий: "+targetLabel(c,target)}),el("div",{class:"mic-row"},ta,mic),st,el("div",{class:"row"},save,cancel));
-  cancel.onclick=()=>{openComposer=null;busy=0;open(current,false)};
+  cancel.onclick=()=>{setDraft(dkey,"");openComposer=null;busy=0;open(current,false)};
   save.onclick=async()=>{const text=ta.value.trim();if(!text){st.textContent="Пустой комментарий не сохраняю.";ta.focus();return;}
     save.disabled=true;st.textContent="Сохраняю…";
     try{const n=await api("/note",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cardId:c.id,target,text,source:ta.dataset.voice?"voice":"text"})});
-      notes.push(norm(n));openComposer=null;busy=0;open(current,false);}
+      setDraft(dkey,"");notes.push(norm(n));openComposer=null;busy=0;open(current,false);}
     catch(e){save.disabled=false;st.textContent="Не сохранилось: "+e.message+". Текст на месте, попробуйте ещё раз.";}};
   setTimeout(()=>ta.focus(),0);return box;}
 function shots(images,side,c){const w=el("div",{class:"shots"});for(const im of images||[]){if(!im.url)continue;
@@ -151,19 +163,24 @@ function open(id,scroll){current=id;const c=cards.find(x=>x.id===id);const d=$("
   renderDecisionBar(c);renderQueue();if(scroll)window.scrollTo({top:0,behavior:"instant"in window?"instant":"auto"});}
 
 function renderDecisionBar(c){const bar=$("#decision");bar.hidden=false;const rv=revised(c.id);const dec=rv?null:decisions[c.id];const st=$("#dstatus");
-  $("#comment").value=dec?.comment||"";
+  const ta=$("#comment");if(!(barCard===c.id&&document.activeElement===ta))ta.value=drafts["dec:"+c.id]??(dec?.comment||"");
+  const same=barCard===c.id;barCard=c.id;if(same&&saving)return;
   for(const b of BTN_IDS)$(b).disabled=!canWrite;
   st.className="status "+(dec?.decision||"");
   st.textContent=!canWrite?"Решение может принять владелец доски.":dec?`Сейчас: ${DEC[dec.decision]}. Можно изменить.`:rv?`Карточка обновлена после вашего «${DEC[decisions[c.id].decision]}». Решите заново.`:"Выберите решение.";}
 
-async function decide(kind){const c=cards.find(x=>x.id===current);if(!c||!canWrite)return;const st=$("#dstatus");
-  const data={decision:kind,comment:$("#comment").value.trim(),at:new Date().toISOString(),cardId:c.id,issue:c.issue||"",title:c.title};
-  if((kind==="alternative"||kind==="no")&&!data.comment){st.className="status";st.textContent=kind==="alternative"?"Опишите, какой вариант нужен. Можно голосом: кнопка микрофона рядом с полем.":"Напишите пару слов, почему нет.";$("#comment").focus();return;}
-  for(const b of BTN_IDS)$(b).disabled=true;st.className="status";st.textContent="Сохраняю…";
-  try{const d=await api("/decision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cardId:c.id,decision:kind,comment:data.comment})});decisions[c.id]={decision:d.decision,comment:d.comment,at:d.at};renderFilters();renderQueue();st.className="status "+kind;st.textContent=`Сохранено: ${DEC[kind]}. Product Owner увидит решение и перенесёт его в задачу.`;
-    const next=visible().find(x=>statusOf(x.id)==="pending"&&x.id!==c.id);if(next)setTimeout(()=>open(next.id,true),900);}
-  catch(e){st.className="status no";st.textContent="Не сохранилось: "+(e?.message||"ошибка")+". Попробуйте ещё раз.";}
-  finally{for(const b of BTN_IDS)$(b).disabled=!canWrite;}}
+async function decide(kind){if(saving)return;const c=cards.find(x=>x.id===current);if(!c||!canWrite)return;const st=$("#dstatus");
+  const comment=$("#comment").value.trim();
+  if((kind==="alternative"||kind==="no")&&!comment){st.className="status";st.textContent=kind==="alternative"?"Опишите, какой вариант нужен. Можно голосом: кнопка микрофона рядом с полем.":"Напишите пару слов, почему нет.";$("#comment").focus();return;}
+  saving=true;for(const b of BTN_IDS)$(b).disabled=true;st.className="status";st.textContent="Сохраняю…";
+  try{const d=await api("/decision",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cardId:c.id,decision:kind,comment})},3);
+    decisions[c.id]={decision:d.decision,comment:d.comment,at:d.at};setDraft("dec:"+c.id,"");
+    st.className="status "+kind;st.replaceChildren(document.createTextNode(`Сохранено: ${DEC[kind]}. `));
+    const next=visible().find(x=>statusOf(x.id)==="pending"&&x.id!==c.id);
+    if(next){const nb=el("button",{class:"linkbtn",text:"Следующая карточка →"});nb.onclick=()=>open(next.id,true);st.append(nb);}
+    renderFilters();renderQueue();}
+  catch(e){st.className="status no";st.textContent="Не сохранилось: "+(e?.message||"ошибка")+". Текст на месте, нажмите ещё раз.";}
+  finally{saving=false;for(const b of BTN_IDS)$(b).disabled=!canWrite;if(pendingRender&&!typing()){pendingRender=false;rerender();}}}
 
 function emptyState(){const none=cards.length&&!visible().length;return el("div",{class:"empty"},el("h2",{text:none?(status==="pending"?"Здесь всё решено":"Здесь пока пусто"):cards.length?"Выберите карточку слева":"Карточки скоро появятся"}),el("p",{text:none?"Переключите проект или статус выше.":cards.length?"Решение принимается внизу экрана: Согласен, Другой вариант, Не согласен или Отложить.":"Product Owner готовит карточки с реальными скриншотами и макетами. Каждая придёт сюда с метрикой и оценкой."}));}
 
@@ -176,10 +193,19 @@ rerender();
 
 (function boot(){
   const mic=micButton($("#comment"),$("#dstatus"));$("#comment-row").append(mic);
+  $("#comment").addEventListener("input",()=>{if(current)setDraft("dec:"+current,$("#comment").value)});
+  document.addEventListener("focusout",()=>setTimeout(()=>{if(pendingRender&&!typing()&&!saving&&!busy){pendingRender=false;rerender();}},300));
   if(!KEY){$("#grid").replaceChildren(el("div",{class:"gate"},el("h1",{text:"Обзор фич"}),el("p",{text:"Откройте доску по личной ссылке с ключом. Ключ сохранится на этом устройстве."})));$("#decision").hidden=true;return;}
   let first=true;
   async function load(){if(busy&&!first)return;
-    try{const s=await api("/state");cards=s.cards;decisions={};for(const d of s.decisions)decisions[d.card_id]={decision:d.decision,comment:d.comment,at:d.at};notes=s.notes.map(norm);
+    try{const s=await api("/state",{},2);
+      const strip=x=>x?{...x,images:(x.images||[]).map(({url,...i})=>i)}:x;
+      const sig=JSON.stringify([s.cards.map(c=>({...c,before:strip(c.before),after:strip(c.after)})),s.decisions,s.notes]);
+      if(!first&&sig===lastSig)return;lastSig=sig;
+      const known={};for(const c of cards)for(const side of["before","after"])for(const im of c[side]?.images||[])if(im.imageId&&im.url)known[im.imageId]=im.url;
+      for(const c of s.cards)for(const side of["before","after"])for(const im of c[side]?.images||[])if(known[im.imageId])im.url=known[im.imageId];
+      cards=s.cards;decisions={};for(const d of s.decisions)decisions[d.card_id]={decision:d.decision,comment:d.comment,at:d.at};notes=s.notes.map(norm);
+      if(!first&&(typing()||saving||busy)){pendingRender=true;renderFilters();renderQueue();return;}
       if(first){first=false;const h=(location.hash||"").slice(1);if(h&&cards.some(c=>c.id===h))current=h;else if(window.matchMedia("(min-width:861px)").matches){const v=visible();current=v[0]?.id||null;}}
       rerender();}
     catch(e){const auth=/unauthorized/.test(e.message);if(first||auth){$("#detail").replaceChildren(el("div",{class:"empty"},el("h2",{text:auth?"Ключ не подходит":"Карточки не загрузились"}),el("p",{text:auth?"Откройте доску по личной ссылке ещё раз.":e.message+". Обновите страницу."})));}}}
